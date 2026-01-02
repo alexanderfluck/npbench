@@ -1,0 +1,1 @@
+/home/alex/Studium/bachelor_thesis/np_bench_fork/npbench/npbench/hardware_info/practical/linpack_hpl-2.3/Make.Linux_npbench
