@@ -135,3 +135,4 @@ _dacegraphs/
 
 # results
 npbench.db
+*.db

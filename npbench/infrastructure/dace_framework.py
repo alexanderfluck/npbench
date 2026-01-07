@@ -292,6 +292,72 @@ class DaceFramework(Framework):
 
         return implementations
 
+    def get_bench_sdfg(self, bench:Benchmark):
+        module_pypath = "npbench.benchmarks.{r}.{m}".format(r=bench.info["relative_path"].replace('/', '.'),
+                                                            m=bench.info["module_name"])
+        if "postfix" in self.info.keys():
+            postfix = self.info["postfix"]
+        else:
+            postfix = self.fname
+        module_str = "{m}_{p}".format(m=module_pypath, p=postfix)
+        func_str = bench.info["func_name"]
+
+        ldict = dict()
+        # Import DaCe implementation
+        try:
+            import copy
+            import dace
+
+            module = importlib.import_module(module_str)
+            ct_impl = getattr(module, func_str)
+
+        except Exception as e:
+            print("Failed to load the DaCe implementation.")
+            raise (e)
+
+        ##### Experimental: Load strict SDFG
+        sdfg_loaded = False
+        if self.load_strict:
+            path = os.path.join(os.getcwd(), 'dace_sdfgs', f"{module_str}-{func_str}.sdfg")
+            try:
+                strict_sdfg = dace.SDFG.from_file(path)
+                sdfg_loaded = True
+            except Exception:
+                pass
+
+        if not sdfg_loaded:
+            #########################################################
+            # Prepare SDFGs
+            base_sdfg, _ = util.benchmark("__npb_result = ct_impl.to_sdfg(simplify=False)",
+                                                   out_text="DaCe parsing time",
+                                                   context=locals(),
+                                                   output='__npb_result',
+                                                   verbose=False)
+            strict_sdfg = copy.deepcopy(base_sdfg)
+            strict_sdfg._name = "strict"
+            ldict['strict_sdfg'] = strict_sdfg
+            simplified_sdfg, _ = util.benchmark("strict_sdfg.simplify()",
+                                            out_text="DaCe Strict Transformations time",
+                                            context=locals(),
+                                            verbose=False)
+            # sdfg_list = [strict_sdfg]
+            # time_list = [parse_time[0] + strict_time[0]]
+        else:
+            ldict['strict_sdfg'] = strict_sdfg
+
+        ##### Experimental: Saving strict SDFG
+        if self.save_strict and not sdfg_loaded:
+            path = os.path.join(os.getcwd(), 'dace_sdfgs')
+            try:
+                os.mkdir(path)
+            except FileExistsError:
+                pass
+            path = os.path.join(os.getcwd(), 'dace_sdfgs', f"{module_str}-{func_str}.sdfg")
+            strict_sdfg.save(path)
+
+        return base_sdfg, simplified_sdfg
+
+
     def params(self, bench: Benchmark, impl: Callable = None):
         return [p for p in bench.info["parameters"]['L'].keys() if p not in bench.info["input_args"]]
 
