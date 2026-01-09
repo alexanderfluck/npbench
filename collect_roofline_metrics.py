@@ -1,20 +1,23 @@
 import argparse
-
-from multiprocessing import Process
-from npbench.infrastructure import (Benchmark, utilities as util, DaceFramework)
-
-from collections import defaultdict
-import dace
-from dace.config import Config
-from dace.codegen.instrumentation import papi
-
 import traceback
 import subprocess
 import re
 import copy
-from statistics import median
-from math import sqrt
+import os
+import importlib
+
 from datetime import datetime, timezone
+from collections import defaultdict
+from math import sqrt
+from statistics import median
+
+import dace
+from dace.config import Config
+from dace.codegen.instrumentation import papi
+import dace.sdfg.performance_evaluation.work_depth_copy as wd
+
+
+from npbench.infrastructure import (Benchmark, utilities as util, DaceFramework)
 
 #################### SQL for creating tables and inserting values ##################################
 event_averages_table_sql = """
@@ -49,17 +52,82 @@ CREATE TABLE IF NOT EXISTS event_counts(
     benchmark text NOT NULL,
     preset text NOT NULL,
     event text NOT NULL,
-    sum integer NOT NULL,
+    total_count integer NOT NULL,
     time real NOT NULL,
     PRIMARY KEY (report_timestamp, event)
 );
 """
 insert_into_event_table_sql = """
 INSERT INTO event_counts(
-    report_timestamp, report_path, collection_script_timestamp, benchmark, preset, event, sum, time
+    report_timestamp, report_path, collection_script_timestamp, benchmark, preset, event, total_count, time
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 """
 ############################################ SQL end ############################################################
+
+
+######################################## Helper Functions #######################################################
+
+def get_bench_sdfg(bench:Benchmark, dace_framework:DaceFramework):
+        module_pypath = "npbench.benchmarks.{r}.{m}".format(r=bench.info["relative_path"].replace('/', '.'),
+                                                            m=bench.info["module_name"])
+        if "postfix" in dace_framework.info.keys():
+            postfix = dace_framework.info["postfix"]
+        else:
+            postfix = dace_framework.fname
+        module_str = "{m}_{p}".format(m=module_pypath, p=postfix)
+        func_str = bench.info["func_name"]
+
+        ldict = dict()
+        # Import DaCe implementation
+        try:
+            module = importlib.import_module(module_str)
+            ct_impl = getattr(module, func_str)
+
+        except Exception as e:
+            print("Failed to load the DaCe implementation.")
+            raise (e)
+
+        ##### Experimental: Load strict SDFG
+        sdfg_loaded = False
+        if dace_framework.load_strict:
+            path = os.path.join(os.getcwd(), 'dace_sdfgs', f"{module_str}-{func_str}.sdfg")
+            try:
+                strict_sdfg = dace.SDFG.from_file(path)
+                sdfg_loaded = True
+            except Exception:
+                pass
+
+        if not sdfg_loaded:
+            #########################################################
+            # Prepare SDFGs
+            base_sdfg, _ = util.benchmark("__npb_result = ct_impl.to_sdfg(simplify=False)",
+                                                   out_text="DaCe parsing time",
+                                                   context=locals(),
+                                                   output='__npb_result',
+                                                   verbose=False)
+            strict_sdfg = copy.deepcopy(base_sdfg)
+            strict_sdfg._name = "strict"
+            ldict['strict_sdfg'] = strict_sdfg
+            simplified_sdfg, _ = util.benchmark("strict_sdfg.simplify()",
+                                            out_text="DaCe Strict Transformations time",
+                                            context=locals(),
+                                            verbose=False)
+            # sdfg_list = [strict_sdfg]
+            # time_list = [parse_time[0] + strict_time[0]]
+        else:
+            ldict['strict_sdfg'] = strict_sdfg
+
+        ##### Experimental: Saving strict SDFG
+        if dace_framework.save_strict and not sdfg_loaded:
+            path = os.path.join(os.getcwd(), 'dace_sdfgs')
+            try:
+                os.mkdir(path)
+            except FileExistsError:
+                pass
+            path = os.path.join(os.getcwd(), 'dace_sdfgs', f"{module_str}-{func_str}.sdfg")
+            strict_sdfg.save(path)
+
+        return base_sdfg, simplified_sdfg
 
 def get_availaple_papi_events():
     """
@@ -164,6 +232,7 @@ def build_papi_event_sets(events:set[str]|list[str]):
 
     return event_sets
 
+######################################## Helper Functions end ###################################################
 
 if __name__ == "__main__":
 
@@ -185,7 +254,6 @@ if __name__ == "__main__":
                         default=True)
     parser.add_argument("-r", "--repeat", type=int, nargs="?", default=10)
     parser.add_argument("-b", "--benchmarks", type=str, nargs="+", default=None)
-    parser.add_argument("-c", "--cores", type=int, nargs="?", default=1)
 
     args = vars(parser.parse_args())
 
@@ -245,30 +313,40 @@ if __name__ == "__main__":
     for event in cache_events:
         if event in available_papi_events:
             available_cache_events.append(event)
-
     event_sets = [{fp_event}]
     if args["build_event_sets"]:
         event_lists = build_papi_event_sets(available_cache_events)
-        event_sets.extend([set(l) for l in event_lists])
+        #event_sets.extend([set(l) for l in event_lists])
     else:
         event_sets.extend([{e} for e in available_cache_events])
 
     util.create_table(conn=conn, create_table_sql=event_averages_table_sql)
-    
     first_bench = True
 
     for benchmark_name in benchmarks:
         print("="*50, benchmark_name, "="*50)
         benchmark = Benchmark(benchmark_name)
-        sdfg, simplified_sdfg = dace_cpu_framework.get_bench_sdfg(benchmark)
-        bdata = benchmark.get_data(args["preset"])
-
+        
         for event_set in event_sets:
             if first_bench:
                 util.create_table(conn=conn, create_table_sql=event_counts_table_sql)
 
             try:
-                papi.PAPIInstrumentation._counters = event_set   
+
+                sdfg, simplified_sdfg = get_bench_sdfg(benchmark, dace_cpu_framework)
+                bdata = benchmark.get_data(args["preset"])
+
+                sdfg.compile()
+                benchmark.info["parameters"].keys()
+                substitutions = benchmark.info["parameters"][preset]
+                print(substitutions)
+                work, depth = wd.analyze_sdfg(sdfg, {}, wd.get_tasklet_work_depth, [])
+                work = work.subs(substitutions)
+                depth = depth.subs(substitutions)
+                print(work, depth)
+        
+                Config.set("compiler", "cpu", "args", value="-O0")
+                Config.set("instrumentation","papi", "default_counters", value=str(list(event_set)))   
                 
                 sdfg.instrument = dace.InstrumentationType.PAPI_Counters
 
@@ -316,7 +394,7 @@ if __name__ == "__main__":
                         f"StdDev%: {stddev_perc:>16.4f}%"
                     )
                     util.create_result(conn, insert_into_averages_table_sql, tuple([run_id, repetitions, benchmark_name, preset, event, event_average, event_median, event_variance, event_stddev, stddev_perc, time_average]))
-
+                    print("Difference: ", abs(event_average-work))
             except Exception as e:
                 print(e)
                 traceback.print_exc()
