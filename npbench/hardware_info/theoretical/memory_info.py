@@ -50,7 +50,7 @@ def get_theoretical_bandwidth():
             elif speed_mt != device_speed:
                 raise NotImplementedError("The function for calculating theoretical bandwidth has not been designed to support multiple different memory speeds")
 
-            device_width = int(device.get("Total Width", "0").split()[0])/8
+            device_width = int(device.get("Data Width", "0").split()[0])/8
             if width == 0:
                 width = device_width
             elif width != device_width:
