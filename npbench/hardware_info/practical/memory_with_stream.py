@@ -19,11 +19,11 @@ def build_stream():
 
     stream_array_size = 0
     if l3_cache_size != "n/a":
-        stream_array_size = l3_cache_size//2
+        stream_array_size = l3_cache_size
     else:
-        stream_array_size = 500000000
+        stream_array_size = 1000000000
     
-    defines = [f"-DSTREAM_ARRAY_SIZE={stream_array_size}", "-DNTIMES=20"]
+    defines = [f"-DSTREAM_ARRAY_SIZE={stream_array_size}", "-DNTIMES=40"]
 
 
     if compiler in ("gcc", "clang"):
