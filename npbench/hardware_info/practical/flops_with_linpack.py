@@ -227,7 +227,7 @@ def auto_conf_hpl(xhpl_path:Path = Path(__file__).parent.resolve()/"linpack_hpl-
     if not available_mem:
         available_mem = 17179869184
 
-    problem_size = (int(sqrt(available_mem/8 * 0.6)) // NB) * NB
+    problem_size = (int(sqrt(available_mem/8 * 0.8)) // NB) * NB
 
     p = 1
     q = 1
@@ -347,6 +347,11 @@ if __name__ == "__main__":
     from npbench.hardware_info.theoretical.cpu_gpu_info import get_cpu_flops
     num_cores = psutil.cpu_count(logical=False)
     hpl_results = get_peak_flops(num_cores=num_cores)
+
+    import json
+    with open('linpack_results.json', 'w') as fp:
+        json.dump(hpl_results, fp)
+
 
     print(
         f"""

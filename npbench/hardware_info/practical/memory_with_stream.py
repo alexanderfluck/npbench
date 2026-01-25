@@ -21,7 +21,7 @@ def build_stream():
     if l3_cache_size != "n/a":
         stream_array_size = l3_cache_size//2
     else:
-        stream_array_size = 50000000
+        stream_array_size = 500000000
     
     defines = [f"-DSTREAM_ARRAY_SIZE={stream_array_size}", "-DNTIMES=20"]
 
@@ -61,4 +61,8 @@ def get_sustained_memory_bandwidth_with_stream():
 
 
 if __name__ == "__main__":
-    print(get_sustained_memory_bandwidth_with_stream())
+
+    result = get_sustained_memory_bandwidth_with_stream()
+    import json
+    with open('stream_results.json', 'w') as fp:
+        json.dump(result, fp)
