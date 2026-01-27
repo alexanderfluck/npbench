@@ -1,4 +1,6 @@
 import subprocess
+from pathlib import Path
+import argparse
 
 def check_sudo_privileges():
     """Check if the current user has sudo privileges by running a simple sudo command."""
@@ -8,8 +10,38 @@ def check_sudo_privileges():
     except subprocess.CalledProcessError:
         return False
 
-def get_memory_info():
-    if not check_sudo_privileges():
+def get_memory_info(file_path:Path=""):
+    print(file_path)
+    if file_path:
+        print("filepath true")         
+        dmi_decode_text = ""
+        devices = []
+        try:
+            with open(file_path, "r") as f:
+                dmi_decode_text = f.read()
+        except:
+            print("Could not read file")
+            return {}
+        
+        blocks = dmi_decode_text.strip().split('\n\n')
+        for block in blocks:
+            block_lines = block.split('\n')    
+            if "DMI type 17" not in block_lines[0]:
+                continue
+            else:
+                header = block_lines[0:2]
+                block_lines = block_lines[2:]
+
+                handle, dmi_type, structure_size = list(map(lambda x: x.strip(), header[0].split(',')))
+                type_name = header[1].strip() 
+
+                block_dict = {'Handle': handle, 'Type number': dmi_type, 'Type name': type_name, 'Structure size': structure_size}
+                for block_line in block_lines:
+                    key, value = block_line.split(":", 1)
+                    block_dict[key.strip()] = value.strip()
+                devices.append(block_dict)
+        return devices
+    elif not check_sudo_privileges():
         print("Cannot get memory information. The memory info is based on the dmidecode command and thus needs sudo privileges.")
         return None
     else:
@@ -33,9 +65,9 @@ def get_memory_info():
             devices.append(block_dict)
         return devices
 
-def get_theoretical_bandwidth():
+def get_theoretical_bandwidth(file_path:str = ""):
     """returns the theoretical bandwidth in MB/s"""
-    mem_info = get_memory_info()
+    mem_info = get_memory_info(file_path)
     if not mem_info:
         return 0
     used_channels = set()
@@ -43,7 +75,8 @@ def get_theoretical_bandwidth():
     width = 0
     for device in mem_info:
         if device.get("Size", "No Module Installed") != "No Module Installed":
-            used_channels.add(device.get("Bank Locator", "Unknown Channel"))
+            channel = device.get("Bank Locator", "Unknown Channel") + "_" +device.get("Locator", "unknown_slot")
+            used_channels.add(channel)
             device_speed = int(device.get("Configured Memory Speed", "0").split()[0])
             if speed_mt == 0:
                 speed_mt = device_speed
@@ -55,7 +88,17 @@ def get_theoretical_bandwidth():
                 width = device_width
             elif width != device_width:
                 raise NotImplementedError("The function for calculating theoretical bandwidth has not been designed to support multiple different memory widths")
+    print(speed_mt, width, used_channels)
     return speed_mt * width * len(used_channels)
 
 if __name__ == "__main__":
-    print(get_theoretical_bandwidth(), "MB/s")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-f",
+                        "--filepath",
+                        type=str,
+                        nargs="?",
+                        default="")
+    args = vars(parser.parse_args())
+    filepath = args["filepath"]
+    
+    print(get_theoretical_bandwidth(filepath), "MB/s")

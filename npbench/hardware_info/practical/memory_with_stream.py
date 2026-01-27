@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from  npbench.hardware_info.theoretical.cpu_gpu_info import get_cpu_cache_size
+import psutil
 
 def build_stream():
     """Builds the STREAM benchmark with an appropriate size and returns the path to the executable"""
@@ -34,8 +35,11 @@ def build_stream():
 
     return exe_path
 
-def get_sustained_memory_bandwidth_with_stream():
+def get_sustained_memory_bandwidth_with_stream(num_procs:int):
     stream_exe = build_stream()
+    os.environ["OMP_NUM_THREADS"] = str(num_procs)
+    os.environ["OMP_PROC_BIND"] = 'spread'
+    os.environ["OMP_PLACES"] = 'cores'
     output = subprocess.run(
         [stream_exe],
         stdout=subprocess.PIPE,
@@ -62,7 +66,8 @@ def get_sustained_memory_bandwidth_with_stream():
 
 if __name__ == "__main__":
 
-    result = get_sustained_memory_bandwidth_with_stream()
+    procs = psutil.cpu_count(logical=False)
+    result = get_sustained_memory_bandwidth_with_stream(procs)
     import json
     with open('stream_results.json', 'w') as fp:
         json.dump(result, fp)
