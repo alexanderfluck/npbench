@@ -6,6 +6,9 @@ import shlex
 from math import sqrt
 import re
 
+def run(cmd):
+    return subprocess.check_output(cmd, text=True).strip()
+
 def detect_mpi(mpicc="mpicc"):
     """
     Return (MPinc, MPlib) using `mpicc -show`
